@@ -63,12 +63,32 @@ fn start_listening() {
 fn handle_client(mut stream: TlsStream<TcpStream>) {
     println!("Connection established.");
     loop {
+        // Read request.
         let mut buffer = [0; 20];
         stream.read(&mut buffer).unwrap();
+        let request = String::from_utf8_lossy(&buffer[..]);
+        let request = request.trim_end_matches(char::from(0));
 
-        println!("Received: {:?}", String::from_utf8_lossy(&buffer[..]));
+        // TODO.
+        match request {
+            "req1" => {
+                // Answer to req1.
+                println!("Received: {:?}", request);
+                stream.write_all("ans1".as_bytes()).unwrap();
+                stream.flush().unwrap();
+            }
 
-        stream.write_all(&buffer).unwrap();
+            "close" => {
+                // Terminate connection.
+                println!("Received: {:?}", request);
+                break;
+            }
+
+            _ => {
+                // Default case. TODO.
+                println!("{:?} was not a valid request.", request);
+            }
+        }
     }
 }
 
