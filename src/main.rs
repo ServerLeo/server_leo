@@ -1,5 +1,6 @@
 extern crate native_tls;
 
+mod matchmaker;
 use native_tls::{Identity, TlsAcceptor, TlsStream};
 use std::fs::File;
 use std::io;
@@ -39,7 +40,7 @@ fn start_listening() {
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
-                // Accept TLS connection and serve on a new thread.
+                // Accept TLS connection and serve on a new thread. TODO: use a thread pool.
                 let tls_acceptor = tls_acceptor.clone();
                 match thread::Builder::new().name(i.to_string()).spawn(move || {
                     let stream = tls_acceptor.accept(stream).unwrap();
@@ -63,13 +64,13 @@ fn start_listening() {
 fn handle_client(mut stream: TlsStream<TcpStream>) {
     println!("Connection established.");
     loop {
-        // Read request.
+        // Read request. TODO: read request as flatbuffer.
         let mut buffer = [0; 20];
         stream.read(&mut buffer).unwrap();
         let request = String::from_utf8_lossy(&buffer[..]);
         let request = request.trim_end_matches(char::from(0));
 
-        // TODO.
+        // TODO: define all possible requests.
         match request {
             "req1" => {
                 // Answer to req1.
@@ -78,6 +79,8 @@ fn handle_client(mut stream: TlsStream<TcpStream>) {
                 stream.flush().unwrap();
             }
 
+            "enqueue" => {}
+
             "close" => {
                 // Terminate connection.
                 println!("Received: {:?}", request);
@@ -85,7 +88,7 @@ fn handle_client(mut stream: TlsStream<TcpStream>) {
             }
 
             _ => {
-                // Default case. TODO.
+                // Default case. TODO: handle bad actors.
                 println!("{:?} was not a valid request.", request);
             }
         }
