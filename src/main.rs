@@ -25,12 +25,12 @@ fn start_listening() {
     // Open identity file and load its content into memory.
     let mut identity_file = File::open("identity.pfx").expect("Unable to open identity.pfx");
 
-    let mut identity = vec![];
-    identity_file.read_to_end(&mut identity).unwrap();
-    let identity = Identity::from_pkcs12(&identity, "krahos").unwrap();
+    let mut server_identity = vec![];
+    identity_file.read_to_end(&mut server_identity).unwrap();
+    let server_identity = Identity::from_pkcs12(&server_identity, "krahos").unwrap();
 
     // Creating TLS listener.
-    let tls_acceptor = TlsAcceptor::new(identity).unwrap();
+    let tls_acceptor = TlsAcceptor::new(server_identity).unwrap();
     let tls_acceptor = Arc::new(tls_acceptor);
 
     // Creating TCP listener.
@@ -79,17 +79,25 @@ fn handle_client(mut stream: TlsStream<TcpStream>) {
                 stream.flush().unwrap();
             }
 
-            "enqueue" => {}
+            "enqueue" => {
+                stream.write_all("Queued".as_bytes()).unwrap();
+                stream.flush().unwrap();
+            }
 
             "close" => {
                 // Terminate connection.
                 println!("Received: {:?}", request);
+                stream.write_all("Terminating".as_bytes()).unwrap();
+                stream.flush().unwrap();
+
                 break;
             }
 
             _ => {
                 // Default case. TODO: handle bad actors.
                 println!("{:?} was not a valid request.", request);
+                stream.write_all("Nope".as_bytes()).unwrap();
+                stream.flush().unwrap();
             }
         }
     }
