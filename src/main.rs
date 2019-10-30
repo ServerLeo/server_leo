@@ -8,6 +8,7 @@ use std::io::prelude::*;
 use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 use std::thread;
+use threadpool::ThreadPool;
 
 fn main() {
     match thread::Builder::new()
@@ -29,6 +30,9 @@ fn start_listening() {
     identity_file.read_to_end(&mut server_identity).unwrap();
     let server_identity = Identity::from_pkcs12(&server_identity, "krahos").unwrap();
 
+    // Creating thread pool.
+    let pool = ThreadPool::new(100);
+
     // Creating TLS listener.
     let tls_acceptor = TlsAcceptor::new(server_identity).unwrap();
     let tls_acceptor = Arc::new(tls_acceptor);
@@ -36,27 +40,20 @@ fn start_listening() {
     // Creating TCP listener.
     let listener = TcpListener::bind("127.0.0.1:5568").expect("Couldn't bind the TcpListener.");
     println!("Listening for incoming connections...");
-    let mut i = 0;
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
                 // Accept TLS connection and serve on a new thread. TODO: use a thread pool.
                 let tls_acceptor = tls_acceptor.clone();
-                match thread::Builder::new().name(i.to_string()).spawn(move || {
+                pool.execute(move || {
                     let stream = tls_acceptor.accept(stream).unwrap();
                     handle_client(stream);
-                }) {
-                    Ok(_) => {}
-                    Err(error) => {
-                        println!("Unable to create thread to serve new client. {:?}", error)
-                    }
-                }
+                });
             }
             Err(error) => {
                 println!("Unable to accept a connection. {:?}", error);
             }
         };
-        i += 1;
     }
 }
 
