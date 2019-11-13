@@ -1,69 +1,93 @@
-extern crate native_tls;
-
 mod matchmaker;
-use native_tls::{Identity, TlsAcceptor, TlsStream};
+use async_std::{io, net::TcpListener, net::TcpStream, prelude::*, task};
+
+use async_tls::TlsAcceptor;
+
+use rustls::internal::pemfile;
+use rustls::{NoClientAuth, ServerConfig};
+
 use std::fs::File;
-use std::io;
-use std::io::prelude::*;
-use std::net::{TcpListener, TcpStream};
+use std::io::BufReader;
+use std::net::SocketAddr;
+use std::path::Path;
 use std::sync::Arc;
 use std::thread;
-use threadpool::ThreadPool;
 
 fn main() {
+    // Loading the server certificate and private key.
+    let configuration = load_config().unwrap();
+
+    // Listening for incoming connections in another thread.
     match thread::Builder::new()
         .name("ListeningThread".to_string())
-        .spawn(move || start_listening())
+        .spawn(move || start_listening(configuration))
     {
         Ok(_) => {}
         Err(error) => println!("Unable to create thread.{:?}", error),
     };
 
-    handle_user_input();
+    // Using the main thread to handle input from the user.
+    task::block_on(async {
+        handle_user_input().await;
+    })
 }
 
-fn start_listening() {
-    // Open identity file and load its content into memory.
-    let mut identity_file = File::open("identity.pfx").expect("Unable to open identity.pfx");
+/// Loads server configuration in terms of certificate, key, settings. TODO: better error handling.
+fn load_config() -> io::Result<ServerConfig> {
+    // Read certificates.
+    let certificate_path = Path::new("./Certificate");
+    let mut buffer = BufReader::new(File::open(certificate_path).unwrap());
 
-    let mut server_identity = vec![];
-    identity_file.read_to_end(&mut server_identity).unwrap();
-    let server_identity = Identity::from_pkcs12(&server_identity, "krahos").unwrap();
+    let certificates = pemfile::certs(&mut buffer).unwrap();
 
-    // Creating thread pool.
-    let pool = ThreadPool::new(100);
+    // Read key.
+    let key_path = Path::new("./key");
+    let mut buffer = BufReader::new(File::open(key_path).unwrap());
 
-    // Creating TLS listener.
-    let tls_acceptor = TlsAcceptor::new(server_identity).unwrap();
-    let tls_acceptor = Arc::new(tls_acceptor);
+    let mut private_key = pemfile::rsa_private_keys(&mut buffer).unwrap();
 
+    // Create server configuration.
+    let mut configuration = ServerConfig::new(NoClientAuth::new());
+
+    configuration
+        .set_single_cert(certificates, private_key.remove(0))
+        .unwrap();
+
+    Ok(configuration)
+}
+
+async fn start_listening(configuration: ServerConfig) {
     // Creating TCP listener.
-    let listener = TcpListener::bind("127.0.0.1:5568").expect("Couldn't bind the TcpListener.");
+    let listener = TcpListener::bind("127.0.0.1:5568").await.unwrap();
+
+    // Creating TLS acceptor.
+    let tls_acceptor = TlsAcceptor::from(Arc::new(configuration));
+
     println!("Listening for incoming connections...");
-    for stream in listener.incoming() {
-        match stream {
-            Ok(stream) => {
-                // Accept TLS connection and serve on a new thread. TODO: use a thread pool.
+    loop {
+        match listener.accept().await {
+            Ok(connection) => {
+                // Accept TLS connection and serve on a new thread.
                 let tls_acceptor = tls_acceptor.clone();
-                pool.execute(move || {
-                    let stream = tls_acceptor.accept(stream).unwrap();
-                    handle_client(stream);
-                });
+
+                // Handle client in a new coroutine.
+                task::spawn(handle_client(tls_acceptor, connection));
             }
             Err(error) => {
-                println!("Unable to accept a connection. {:?}", error);
+                println!("Server was unable to accept a connection. {:?}", error);
             }
         };
     }
 }
 
 /// Serves the client requests.
-fn handle_client(mut stream: TlsStream<TcpStream>) {
-    println!("Connection established.");
+async fn handle_client(tls_acceptor: TlsAcceptor, connection: (TcpStream, SocketAddr)) {
+    let mut stream = tls_acceptor.accept(connection.0).await.unwrap();
+    println!("Accepted TcpConnection with {:?}.", connection.1);
     loop {
         // Read request. TODO: read request as flatbuffer.
         let mut buffer = [0; 20];
-        stream.read(&mut buffer).unwrap();
+        stream.read(&mut buffer).await.unwrap();
         let request = String::from_utf8_lossy(&buffer[..]);
         let request = request.trim_end_matches(char::from(0));
 
@@ -72,20 +96,20 @@ fn handle_client(mut stream: TlsStream<TcpStream>) {
             "req1" => {
                 // Answer to req1.
                 println!("Received: {:?}", request);
-                stream.write_all("ans1".as_bytes()).unwrap();
-                stream.flush().unwrap();
+                stream.write_all("ans1".as_bytes()).await.unwrap();
+                stream.flush().await.unwrap();
             }
 
             "enqueue" => {
-                stream.write_all("Queued".as_bytes()).unwrap();
-                stream.flush().unwrap();
+                stream.write_all("Queued".as_bytes()).await.unwrap();
+                stream.flush().await.unwrap();
             }
 
             "close" => {
                 // Terminate connection.
                 println!("Received: {:?}", request);
-                stream.write_all("Terminating".as_bytes()).unwrap();
-                stream.flush().unwrap();
+                stream.write_all("Terminating".as_bytes()).await.unwrap();
+                stream.flush().await.unwrap();
 
                 break;
             }
@@ -93,15 +117,15 @@ fn handle_client(mut stream: TlsStream<TcpStream>) {
             _ => {
                 // Default case. TODO: handle bad actors.
                 println!("{:?} was not a valid request.", request);
-                stream.write_all("Nope".as_bytes()).unwrap();
-                stream.flush().unwrap();
+                stream.write_all("Nope".as_bytes()).await.unwrap();
+                stream.flush().await.unwrap();
             }
         }
     }
 }
 
 /// This function will provide administration features to the server applications.
-fn handle_user_input() {
+async fn handle_user_input() {
     // Initializations.
     let stdin = io::stdin();
     let mut buffer = String::new();
@@ -110,7 +134,7 @@ fn handle_user_input() {
     loop {
         println!("Awaiting input:");
         buffer.clear();
-        stdin.read_line(&mut buffer).unwrap();
+        stdin.read_line(&mut buffer).await.unwrap();
 
         match buffer.trim() {
             "--exit" => {
