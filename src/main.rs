@@ -14,9 +14,12 @@ use std::sync::Arc;
 use std::thread;
 
 fn main() {
+    println!("Creating server configuration...");
     // Loading the server certificate and private key.
     let configuration = load_config().expect("Failed to load server configuration.");
+    println!("Server configuration created.");
 
+    println!("Creating listening thread...");
     // Listening for incoming connections in another thread.
     match thread::Builder::new()
         .name("ListeningThread".to_string())
@@ -59,8 +62,9 @@ fn load_config() -> io::Result<ServerConfig> {
 }
 
 async fn start_listening(configuration: ServerConfig) {
+    println!("Listening thread created.");
     // Creating TCP listener.
-    let listener = TcpListener::bind("127.0.0.1:5568")
+    let listener = TcpListener::bind("localhost:5568")
         .await
         .expect("Unable to bind to localhost.");
 
