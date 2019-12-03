@@ -8,6 +8,6 @@ edition = "2018"
 
 [dependencies]
 flatbuffers = "0.6.0"
-async-std = "1.0.1"
+async-std = "1.2.0"
 async-tls = "0.6.0"
 rustls = "0.16"

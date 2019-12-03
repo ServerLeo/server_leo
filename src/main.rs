@@ -21,13 +21,10 @@ fn main() {
 
     println!("Creating listening thread...");
     // Listening for incoming connections in another thread.
-    match thread::Builder::new()
+    thread::Builder::new()
         .name("ListeningThread".to_string())
         .spawn(move || task::block_on(start_listening(configuration)))
-    {
-        Ok(_) => {}
-        Err(error) => println!("Unable to create thread.{:?}", error),
-    };
+        .expect("Unable to create thread.");
 
     // Using the main thread to handle input from the user.
     task::block_on(async {
@@ -64,93 +61,99 @@ fn load_config() -> io::Result<ServerConfig> {
 async fn start_listening(configuration: ServerConfig) {
     println!("Listening thread created.");
     // Creating TCP listener.
-    match TcpListener::bind("localhost:5568").await {
-        Ok(tcp_listener) => {
-            // Creating TLS acceptor.
-            let tls_acceptor = TlsAcceptor::from(Arc::new(configuration));
+    let tcp_listener = match TcpListener::bind("localhost:5568").await {
+        Ok(tcp_listener) => tcp_listener,
+        Err(error) => {
+            println!("Server was unable to accept a connection. {:?}", error);
+            return;
+        }
+    };
 
-            println!("Listening for incoming connections...");
-            loop {
-                match tcp_listener.accept().await {
-                    Ok(connection) => {
-                        println!("TCP handshake with {:?} completed", connection.1);
-                        // Accept TLS connection and serve on a new thread.
-                        let tls_acceptor = tls_acceptor.clone();
+    // Creating TLS acceptor.
+    let tls_acceptor = TlsAcceptor::from(Arc::new(configuration));
 
-                        // Handle client in a new coroutine.
-                        task::spawn(handle_client(tls_acceptor, connection));
-                    }
-                    Err(error) => {
-                        println!("Server was unable to accept a connection. {:?}", error);
-                    }
-                };
+    println!("Listening for incoming connections...");
+    loop {
+        match tcp_listener.accept().await {
+            Ok(connection) => {
+                println!("TCP handshake with {:?} completed", connection.1);
+                // Accept TLS connection and serve on a new thread.
+                let tls_acceptor = tls_acceptor.clone();
+
+                // Handle client in a new coroutine.
+                task::spawn(handle_client(tls_acceptor, connection));
+            }
+            Err(error) => {
+                println!("Unable to bind TCP listener. {:?}", error);
+                return;
             }
         }
-
-        Err(error) => println!("Unable to bind TCP listener. {:?}", error),
     }
 }
 
 /// Serves the client requests.
 async fn handle_client(tls_acceptor: TlsAcceptor, connection: (TcpStream, SocketAddr)) {
-    match tls_acceptor.accept(connection.0).await {
-        Ok(tls_stream) => {
-            println!("Accepted a TLS connection from {:?}.", connection.1);
-            loop {
-                // Read request. TODO: read request as flatbuffer.
-                let mut buffer = [0; 20];
+    let mut tls_stream = match tls_acceptor.accept(connection.0).await {
+        Ok(tls_stream) => tls_stream,
+        Err(error) => {
+            println!("Unable to establish a TLS connection. {:?}", error);
+            return;
+        }
+    };
+
+    println!("Accepted a TLS connection from {:?}.", connection.1);
+    loop {
+        // Read request. TODO: read request as flatbuffer.
+        let mut buffer = [0; 20];
+        tls_stream
+            .read(&mut buffer)
+            .await
+            .expect("Unable to read from stream.");
+        let request = String::from_utf8_lossy(&buffer[..]);
+        let request = request.trim_end_matches(char::from(0));
+
+        // TODO: define all possible requests.
+        match request {
+            "req1" => {
+                // Answer to req1.
+                println!("Received: {:?}", request);
                 tls_stream
-                    .read(&mut buffer)
+                    .write_all("ans1".as_bytes())
                     .await
-                    .expect("Unable to read from stream.");
-                let request = String::from_utf8_lossy(&buffer[..]);
-                let request = request.trim_end_matches(char::from(0));
+                    .expect("Unable to write on stream.");
+                tls_stream.flush().await.expect("Unable to flush stream.");
+            }
 
-                // TODO: define all possible requests.
-                match request {
-                    "req1" => {
-                        // Answer to req1.
-                        println!("Received: {:?}", request);
-                        tls_stream
-                            .write_all("ans1".as_bytes())
-                            .await
-                            .expect("Unable to write on stream.");
-                        tls_stream.flush().await.expect("Unable to flush stream.");
-                    }
+            "enqueue" => {
+                tls_stream
+                    .write_all("Queued".as_bytes())
+                    .await
+                    .expect("Unable to write on stream.");
+                tls_stream.flush().await.expect("Unable to flush stream.");
+            }
 
-                    "enqueue" => {
-                        tls_stream
-                            .write_all("Queued".as_bytes())
-                            .await
-                            .expect("Unable to write on stream.");
-                        tls_stream.flush().await.expect("Unable to flush stream.");
-                    }
+            "close" => {
+                // Terminate connection.
+                println!("Received: {:?}", request);
+                tls_stream
+                    .write_all("Terminating".as_bytes())
+                    .await
+                    .expect("Unable to write on stream.");
+                tls_stream.flush().await.expect("Unable to flush stream.");
 
-                    "close" => {
-                        // Terminate connection.
-                        println!("Received: {:?}", request);
-                        tls_stream
-                            .write_all("Terminating".as_bytes())
-                            .await
-                            .expect("Unable to write on stream.");
-                        tls_stream.flush().await.expect("Unable to flush stream.");
+                break;
+            }
 
-                        break;
-                    }
-
-                    _ => {
-                        // Default case. TODO: handle bad actors.
-                        println!("{:?} was not a valid request.", request);
-                        tls_stream
-                            .write_all("Nope".as_bytes())
-                            .await
-                            .expect("Unable to write on stream.");
-                        tls_stream.flush().await.expect("Unable to flush stream.");
-                    }
-                }
+            _ => {
+                // Default case. TODO: handle bad actors.
+                println!("{:?} was not a valid request.", request);
+                tls_stream
+                    .write_all("Nope".as_bytes())
+                    .await
+                    .expect("Unable to write on stream.");
+                tls_stream.flush().await.expect("Unable to flush stream.");
             }
         }
-        Err(error) => println!("Unable to accept TLS connection. {:?}", error),
     }
 }
 
@@ -162,7 +165,7 @@ async fn handle_user_input() {
 
     // Main loop.
     loop {
-        println!("Awaiting input:");
+        println!("Actively listening for user input.");
         buffer.clear();
         stdin
             .read_line(&mut buffer)
