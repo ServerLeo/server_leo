@@ -3,23 +3,17 @@ use async_std::{io, net::TcpListener, net::TcpStream, prelude::*, task};
 
 use async_tls::TlsAcceptor;
 
-use rustls::internal::pemfile;
-use rustls::{NoClientAuth, ServerConfig};
+use rustls::{internal::pemfile, NoClientAuth, ServerConfig};
 
-use std::fs::File;
-use std::io::BufReader;
-use std::net::SocketAddr;
-use std::path::Path;
-use std::sync::Arc;
-use std::thread;
+use std::{fs::File, io::BufReader, net::SocketAddr, path::Path, sync::Arc, thread};
 
 fn main() {
-    println!("Creating server configuration...");
+    eprintln!("Creating server configuration...");
     // Loading the server certificate and private key.
     let configuration = load_config().expect("Failed to load server configuration.");
-    println!("Server configuration created.");
+    eprintln!("Server configuration created.");
 
-    println!("Creating listening thread...");
+    eprintln!("Creating listening thread...");
     // Listening for incoming connections in another thread.
     thread::Builder::new()
         .name("ListeningThread".to_string())
@@ -32,9 +26,9 @@ fn main() {
     })
 }
 
-/// Loads server configuration in terms of certificate, key, settings. TODO: better error handling.
+/// Loads server configuration in terms of certificate, key, settings.
 fn load_config() -> io::Result<ServerConfig> {
-    // Read key.
+    // Read key. TODO: get path and filenames from configuration file or arguments.
     let key_path = Path::new("end.rsa");
     let mut buffer = BufReader::new(File::open(key_path).expect("Unable to open key.pem."));
 
@@ -58,13 +52,14 @@ fn load_config() -> io::Result<ServerConfig> {
     Ok(configuration)
 }
 
+/// Starts listening for incoming connections and serves them on a new aync function.
 async fn start_listening(configuration: ServerConfig) {
-    println!("Listening thread created.");
+    eprintln!("Listening thread created.");
     // Creating TCP listener.
     let tcp_listener = match TcpListener::bind("localhost:5568").await {
         Ok(tcp_listener) => tcp_listener,
         Err(error) => {
-            println!("Server was unable to accept a connection. {:?}", error);
+            eprintln!("Server was unable to accept a connection. {:?}", error);
             return;
         }
     };
@@ -72,11 +67,11 @@ async fn start_listening(configuration: ServerConfig) {
     // Creating TLS acceptor.
     let tls_acceptor = TlsAcceptor::from(Arc::new(configuration));
 
-    println!("Listening for incoming connections...");
+    eprintln!("Listening for incoming connections...");
     loop {
         match tcp_listener.accept().await {
             Ok(connection) => {
-                println!("TCP handshake with {:?} completed", connection.1);
+                eprintln!("TCP handshake with {:?} completed", connection.1);
                 // Accept TLS connection and serve on a new thread.
                 let tls_acceptor = tls_acceptor.clone();
 
@@ -84,7 +79,7 @@ async fn start_listening(configuration: ServerConfig) {
                 task::spawn(handle_client(tls_acceptor, connection));
             }
             Err(error) => {
-                println!("Unable to bind TCP listener. {:?}", error);
+                eprintln!("Unable to bind TCP listener. {:?}", error);
                 return;
             }
         }
@@ -96,12 +91,12 @@ async fn handle_client(tls_acceptor: TlsAcceptor, connection: (TcpStream, Socket
     let mut tls_stream = match tls_acceptor.accept(connection.0).await {
         Ok(tls_stream) => tls_stream,
         Err(error) => {
-            println!("Unable to establish a TLS connection. {:?}", error);
+            eprintln!("Unable to establish a TLS connection. {:?}", error);
             return;
         }
     };
 
-    println!("Accepted a TLS connection from {:?}.", connection.1);
+    eprintln!("Accepted a TLS connection from {:?}.", connection.1);
     loop {
         // Read request. TODO: read request as flatbuffer.
         let mut buffer = [0; 20];
@@ -116,7 +111,7 @@ async fn handle_client(tls_acceptor: TlsAcceptor, connection: (TcpStream, Socket
         match request {
             "req1" => {
                 // Answer to req1.
-                println!("Received: {:?}", request);
+                eprintln!("Received: {:?}", request);
                 tls_stream
                     .write_all("ans1".as_bytes())
                     .await
@@ -134,7 +129,7 @@ async fn handle_client(tls_acceptor: TlsAcceptor, connection: (TcpStream, Socket
 
             "close" => {
                 // Terminate connection.
-                println!("Received: {:?}", request);
+                eprintln!("Received: {:?}", request);
                 tls_stream
                     .write_all("Terminating".as_bytes())
                     .await
@@ -146,7 +141,7 @@ async fn handle_client(tls_acceptor: TlsAcceptor, connection: (TcpStream, Socket
 
             _ => {
                 // Default case. TODO: handle bad actors.
-                println!("{:?} was not a valid request.", request);
+                eprintln!("{:?} was not a valid request.", request);
                 tls_stream
                     .write_all("Nope".as_bytes())
                     .await
@@ -157,7 +152,7 @@ async fn handle_client(tls_acceptor: TlsAcceptor, connection: (TcpStream, Socket
     }
 }
 
-/// This function will provide administration features to the server applications.
+/// This function will provide administration features to the server application.
 async fn handle_user_input() {
     // Initializations.
     let stdin = io::stdin();
