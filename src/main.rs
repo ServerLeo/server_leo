@@ -36,9 +36,9 @@ fn load_config() -> io::Result<ServerConfig> {
         pemfile::rsa_private_keys(&mut buffer).expect("Unable to read private key.");
 
     // Read certificates.
-    let certificate_path = Path::new("end.cert");
+    let certificate_path = Path::new("end.crt");
     let mut buffer =
-        BufReader::new(File::open(certificate_path).expect("Unable to open identity.pfx."));
+        BufReader::new(File::open(certificate_path).expect("Unable to open certificate."));
 
     let certificates = pemfile::certs(&mut buffer).expect("Unable to open identity certificate.");
 
